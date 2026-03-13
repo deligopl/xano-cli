@@ -229,6 +229,25 @@ export default class Push extends BaseCommand {
     const cliProfile = cliConfig?.profile
     const agentMode = isAgentMode(flags.agent)
 
+    // Agent safety: block global push (no paths) and --clean flag
+    if (agentMode && inputPaths.length === 0) {
+      this.log('AGENT_ERROR: global_push_blocked')
+      this.log('AGENT_MESSAGE: Global push is restricted to manual execution for safety. Agents must specify files or directories.')
+      this.log('AGENT_CONTEXT: Explain to the human operator what changes you made, why a push is needed, and which files are affected.')
+      this.log('AGENT_COMMAND: xano push')
+      this.log('AGENT_ALTERNATIVE: Push specific files or directories instead. Run "xano status" to identify changed files, then push them individually (e.g., "xano push functions/my_function.xs apis/").')
+      return
+    }
+
+    if (agentMode && flags.clean) {
+      this.log('AGENT_ERROR: clean_flag_blocked')
+      this.log('AGENT_MESSAGE: The --clean flag is restricted to manual execution. It deletes objects from Xano that don\'t exist locally.')
+      this.log('AGENT_CONTEXT: Explain to the human operator which orphan files need cleanup and why.')
+      this.log('AGENT_COMMAND: xano push --clean')
+      this.log('AGENT_ALTERNATIVE: Push your changed files without --clean. Ask the human to handle orphan cleanup manually.')
+      return
+    }
+
     // Check for missing profile - this is now an error
     const profileError = getMissingProfileError(cliProfile)
     if (profileError) {
@@ -307,6 +326,28 @@ export default class Push extends BaseCommand {
     this.log(`Workspace: ${config.workspaceName}`)
     this.log(`Branch: ${config.branch}`)
     this.log('')
+
+    // Interactive confirmation for global push (no specific paths)
+    if (inputPaths.length === 0 && !flags.force && filesToPush.length > 0) {
+      this.log('Files to push:')
+      for (const file of filesToPush.slice(0, 20)) {
+        this.log(`  ${file}`)
+      }
+
+      if (filesToPush.length > 20) {
+        this.log(`  ... and ${filesToPush.length - 20} more`)
+      }
+
+      this.log('')
+
+      const confirmed = await this.confirmGlobalOperation(`Push all ${filesToPush.length} file(s) to Xano?`)
+      if (!confirmed) {
+        this.log('Push cancelled.')
+        return
+      }
+
+      this.log('')
+    }
 
     if (filesToPush.length > 0) {
       this.log(`Pushing ${filesToPush.length} file(s) to Xano...`)
@@ -476,6 +517,23 @@ export default class Push extends BaseCommand {
       this.log('')
       this.log('Some files failed to push. Review the errors above.')
     }
+  }
+
+  /**
+   * Prompt user to confirm a global operation
+   */
+  private async confirmGlobalOperation(message: string): Promise<boolean> {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    })
+
+    return new Promise(resolve => {
+      rl.question(`${message} [y/N] `, answer => {
+        rl.close()
+        resolve(answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes')
+      })
+    })
   }
 
   /**

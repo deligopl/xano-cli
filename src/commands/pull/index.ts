@@ -1,6 +1,7 @@
 import { Args, Flags } from '@oclif/core'
 import { execSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import * as readline from 'node:readline'
 import { dirname, join, relative, resolve } from 'node:path'
 
 import type {
@@ -125,6 +126,25 @@ private customResolver?: PathResolver
     const cliProfile = cliConfig?.profile
     const agentMode = isAgentMode(flags.agent)
 
+    // Agent safety: block global pull (no paths) and --clean flag
+    if (agentMode && inputPaths.length === 0) {
+      this.log('AGENT_ERROR: global_pull_blocked')
+      this.log('AGENT_MESSAGE: Global pull is restricted to manual execution for safety. Agents must specify files or directories.')
+      this.log('AGENT_CONTEXT: Explain to the human operator why a pull is needed and which files you expect to receive.')
+      this.log('AGENT_COMMAND: xano pull')
+      this.log('AGENT_ALTERNATIVE: Pull specific files or directories instead (e.g., "xano pull functions/" or "xano pull tables/users.xs"). Run "xano status" to see what needs updating.')
+      return
+    }
+
+    if (agentMode && flags.clean) {
+      this.log('AGENT_ERROR: clean_flag_blocked')
+      this.log('AGENT_MESSAGE: The --clean flag is restricted to manual execution. It deletes local files that don\'t exist on Xano.')
+      this.log('AGENT_CONTEXT: Explain to the human operator why a clean pull is needed.')
+      this.log('AGENT_COMMAND: xano pull --clean')
+      this.log('AGENT_ALTERNATIVE: Pull specific files without --clean. Ask the human to handle cleanup manually.')
+      return
+    }
+
     // Check for missing profile - this is now an error
     const profileError = getMissingProfileError(cliProfile)
     if (profileError) {
@@ -173,6 +193,26 @@ private customResolver?: PathResolver
     let filesToPull: string[] = []
     if (!pullAllFiles) {
       filesToPull = this.expandPaths(projectRoot, inputPaths, objects)
+    }
+
+    // Interactive confirmation for global pull (before any API calls)
+    if (pullAllFiles && !flags.force) {
+      this.log(`  Workspace: ${config.workspaceName}`)
+      this.log(`  Branch: ${config.branch}`)
+      this.log('')
+
+      const knownCount = objects.length
+      const countLabel = knownCount > 0 ? `${knownCount} tracked` : 'all'
+      this.log(`This will pull ${countLabel} file(s) from Xano.`)
+      this.log('')
+
+      const confirmed = await this.confirmGlobalOperation(`Pull ${countLabel} file(s)?`)
+      if (!confirmed) {
+        this.log('Pull cancelled.')
+        return
+      }
+
+      this.log('')
     }
 
     // Determine if we need to fetch from API:
@@ -307,6 +347,23 @@ private customResolver?: PathResolver
 
     this.log('')
     this.log(`Pulled: ${successCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`)
+  }
+
+  /**
+   * Prompt user to confirm a global operation
+   */
+  private async confirmGlobalOperation(message: string): Promise<boolean> {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    })
+
+    return new Promise(resolve => {
+      rl.question(`${message} [y/N] `, answer => {
+        rl.close()
+        resolve(answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes')
+      })
+    })
   }
 
   private attemptMerge(

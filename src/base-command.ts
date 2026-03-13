@@ -62,11 +62,22 @@ export function detectAgentEnvironment(): null | string {
 
 /**
  * Check if agent mode is active (via flag, env var, or auto-detection)
+ *
+ * Priority:
+ * 1. --agent flag or XANO_AGENT_MODE=1 → always on
+ * 2. XANO_AGENT_MODE=0|false → explicitly forced off, skip auto-detection
+ * 3. Otherwise → auto-detect from environment (CLAUDECODE, CURSOR, etc.)
+ *
+ * Note: oclif boolean flags default to false, so we cannot distinguish
+ * "user passed --agent=false" from "flag not passed". Use XANO_AGENT_MODE=0
+ * to explicitly force agent mode off.
  */
 export function isAgentMode(flagValue?: boolean): boolean {
-  // Explicit flag always wins
+  // Explicit flag or env var → on
   if (flagValue === true) return true
-  if (flagValue === false && process.env.XANO_AGENT_MODE !== '1') return false
+
+  // Explicitly forced off via env var
+  if (process.env.XANO_AGENT_MODE === '0' || process.env.XANO_AGENT_MODE === 'false') return false
 
   // Auto-detect from environment
   return detectAgentEnvironment() !== null

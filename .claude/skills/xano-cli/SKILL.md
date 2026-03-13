@@ -1524,6 +1524,41 @@ AGENT_SUGGEST: Ask user which profile to use, then run: xano init --profile=<sel
 | `AGENT_ACTION:` | Instruction for what the agent should do |
 | `AGENT_SUGGEST:` | Suggested action or command |
 
+### Agent Push/Pull Safety Restrictions
+
+**Agents MUST always specify file paths or directories when using `push` and `pull`.** Global operations (no arguments) and the `--clean` flag are blocked in agent mode.
+
+**Blocked in agent mode:**
+- `xano push` (no arguments) — global push of all changed files
+- `xano pull` (no arguments) — global pull of all files
+- `xano push --clean` — deletes objects from Xano not found locally
+- `xano pull --clean` — deletes local files not found on Xano
+- `--force` does NOT bypass these restrictions
+
+**Always allowed in agent mode:**
+- `xano push functions/my_function.xs` — push specific file
+- `xano push functions/ apis/` — push specific directories
+- `xano pull tables/users.xs` — pull specific file
+- `xano pull apis/auth/` — pull specific directory
+- `xano status` — check what changed (always safe)
+
+**When you need a global push/pull:**
+1. Stop and explain to the human what you changed and why a global operation is needed
+2. Provide the exact command for them to run manually (e.g., `xano push`)
+3. Propose an alternative: push only the specific files you modified
+
+**Example workflow:**
+```bash
+# Check what changed
+xano status
+
+# Push only the files you worked on
+xano push functions/calculate_total.xs apis/orders/create_POST.xs
+
+# If global push is truly needed, ask the human to run:
+# xano push
+```
+
 ### Agent Mode for `init` Command
 
 The `init` command has full agent mode support for non-interactive setup:
