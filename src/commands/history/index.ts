@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import type { RequestHistoryItem, XanoObject, XanoObjectType } from '../../lib/types.js'
 
-import { createApiClientFromProfile, getDefaultProfileName } from '../../lib/api.js'
+import { createApiClientFromProfile, getCliProfile, getDefaultProfileName } from '../../lib/api.js'
 import { loadObjects } from '../../lib/objects.js'
 import { findProjectRoot, loadLocalConfig } from '../../lib/project.js'
 
@@ -180,8 +180,8 @@ static flags = {
       this.error('Project not initialized. Run "xano init" first.')
     }
 
-    // Get profile
-    const profileName = flags.profile || getDefaultProfileName()
+    // Get profile - prefer .xano/cli.json, then --profile flag, then global default
+    const profileName = getCliProfile(projectRoot) || flags.profile || getDefaultProfileName()
     if (!profileName) {
       this.error('No profile found. Run "xano init" first.')
     }

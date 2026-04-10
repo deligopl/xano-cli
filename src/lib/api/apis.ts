@@ -151,6 +151,7 @@ export class ApisApi extends BaseApi {
   /**
    * List all endpoints - fetches per API group to ensure apigroup_id is set
    * The workspace-level /api endpoint doesn't reliably return apigroup_id
+   * Uses batched parallel requests (max 5 concurrent) with retry to avoid rate limiting
    */
   async listEndpoints(page = 1, perPage = 100): Promise<ApiResponse<{ items: XanoApiEndpoint[] }>> {
     // Fetch all groups first
@@ -164,23 +165,51 @@ export class ApisApi extends BaseApi {
       )
     }
 
-    // Fetch endpoints for all groups in parallel for better performance
-    const groupIds = groupsResult.data.items.map(g => g.id)
-    const promises = groupIds.map(groupId =>
-      apiRequest<{ items: XanoApiEndpoint[] }>(
-        this.profile,
-        'GET',
-        `/api:meta/workspace/${this.workspaceId}/apigroup/${groupId}/api?${this.branchParam}&page=1&per_page=1000&include_xanoscript=true`
-      ).then(response => ({ groupId, response }))
-    )
-
-    const results = await Promise.all(promises)
+    const groups = groupsResult.data.items
     const allEndpoints: XanoApiEndpoint[] = []
+    const failedGroups: Array<{ error: string; groupId: number }> = []
 
-    for (const { groupId, response } of results) {
-      if (response.ok && response.data?.items) {
-        for (const ep of response.data.items) {
-          allEndpoints.push({ ...ep, apigroup_id: groupId }) // eslint-disable-line camelcase
+    // Fetch in batches of 5 to avoid rate limiting
+    const BATCH_SIZE = 5
+    for (let i = 0; i < groups.length; i += BATCH_SIZE) {
+      const batch = groups.slice(i, i + BATCH_SIZE)
+      const promises = batch.map(group =>
+        apiRequest<{ items: XanoApiEndpoint[] }>(
+          this.profile,
+          'GET',
+          `/api:meta/workspace/${this.workspaceId}/apigroup/${group.id}/api?${this.branchParam}&page=1&per_page=1000&include_xanoscript=true`
+        ).then(response => ({ group, response }))
+      )
+
+      const results = await Promise.all(promises) // eslint-disable-line no-await-in-loop
+
+      for (const { group, response } of results) {
+        if (response.ok && response.data?.items) {
+          for (const ep of response.data.items) {
+            allEndpoints.push({ ...ep, apigroup_id: group.id }) // eslint-disable-line camelcase
+          }
+        } else {
+          failedGroups.push({ error: response.error || `HTTP ${response.status}`, groupId: group.id })
+        }
+      }
+    }
+
+    // Retry failed groups sequentially
+    if (failedGroups.length > 0) {
+      for (const { groupId } of failedGroups) {
+        // eslint-disable-next-line no-await-in-loop -- Sequential retry for rate limiting
+        const retryResponse = await apiRequest<{ items: XanoApiEndpoint[] }>(
+          this.profile,
+          'GET',
+          `/api:meta/workspace/${this.workspaceId}/apigroup/${groupId}/api?${this.branchParam}&page=1&per_page=1000&include_xanoscript=true`
+        )
+
+        if (retryResponse.ok && retryResponse.data?.items) {
+          for (const ep of retryResponse.data.items) {
+            allEndpoints.push({ ...ep, apigroup_id: groupId }) // eslint-disable-line camelcase
+          }
+        } else {
+          console.error(`Warning: Failed to fetch endpoints for API group ${groupId}: ${retryResponse.error || `HTTP ${retryResponse.status}`}`)
         }
       }
     }
