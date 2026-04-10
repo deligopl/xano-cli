@@ -11,7 +11,8 @@ import type {
   XanoPaths,
 } from './types.js'
 
-import { findObjectsByType, loadObjects } from './objects.js'
+import { extractName } from './detector.js'
+import { decodeBase64, findObjectsByType, loadObjects } from './objects.js'
 
 /**
  * Result of local table resolution
@@ -63,9 +64,18 @@ export function resolveTableFromLocal(
   const lowerRef = tableRef.toLowerCase()
 
   for (const table of tables) {
+    // Match against file path basename (sanitized name)
     const tableName = extractTableNameFromPath(table.path)
     if (tableName.toLowerCase() === lowerRef) {
       return { id: table.id, name: tableName }
+    }
+
+    // Match against original API name from XanoScript content
+    if (table.original) {
+      const originalName = extractName(decodeBase64(table.original))
+      if (originalName && originalName.toLowerCase() === lowerRef) {
+        return { id: table.id, name: originalName }
+      }
     }
   }
 
